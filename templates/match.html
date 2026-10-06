@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#06150e">
+<title>TriCue Match</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<main class="app">
+<header>
+  <div><b>TRICUE</b><small>● REAL RULES MODE</small></div>
+  <button id="newMatch" type="button">NEW MATCH</button>
+</header>
+
+<section class="scores" id="scores">
+{% for p in game.players %}
+<div class="score"><b>{{ p.name }}</b><strong>{{ p.score }}</strong><small>POINTS</small><em>★ LEADING</em></div>
+{% endfor %}
+</section>
+
+<section class="turnbar">
+<div><small>CURRENT TURN</small><strong id="turn">—</strong></div>
+<div><small>BALL ON</small><strong id="phase">—</strong></div>
+<div><small>BREAK</small><strong id="brk">0</strong></div>
+<div><small>REDS</small><strong id="reds">{{ game.reds_potted }}/{{ game.red_count }}</strong></div>
+</section>
+
+<section class="players">
+{% for p in game.players %}
+<article class="player-card" data-player="{{ loop.index0 }}">
+  <div class="player"><div><small>PLAYER {{ loop.index }}</small><h2>{{ p.name }}</h2></div><strong class="mini">{{ p.score }}</strong></div>
+  <div class="status">Waiting</div>
+</article>
+{% endfor %}
+</section>
+
+<section class="controls">
+  <div class="control-title">BALLS</div>
+  <div class="balls" id="balls">
+    <button type="button" class="ball red" data-kind="RED">RED <b>+1</b></button>
+    {% for n,v,c in balls[1:] %}
+    <button type="button" class="ball" data-kind="{{ n }}">{{ n }} <b>+{{ v }}</b></button>
+    {% endfor %}
+  </div>
+
+  <div class="control-title">FOUL</div>
+  <div class="fouls">
+    <button type="button" data-foul="4">FOUL <b>-4</b></button>
+    <button type="button" data-foul="5">FOUL <b>-5</b></button>
+    <button type="button" data-foul="6">FOUL <b>-6</b></button>
+    <button type="button" data-foul="7">FOUL <b>-7</b></button>
+  </div>
+
+  <button type="button" class="miss" id="miss">MISS / END VISIT</button>
+  <button type="button" class="undo" id="undo">↩ UNDO LAST ACTION</button>
+</section>
+<div id="toast" role="status" aria-live="polite"></div>
+</main>
+<script>
+'use strict';
+let game = {{ game|tojson }};
+const colourOrder = ['YELLOW','GREEN','BROWN','BLUE','PINK','BLACK'];
+const $ = (s, root=document) => root.querySelector(s);
+const $$ = (s, root=document) => [...root.querySelectorAll(s)];
+
+function ballOn() {
+  if (game.phase === 'RED') return 'RED';
+  if (game.phase === 'COLOUR') return 'COLOUR';
+  if (game.phase === 'CLEARING') return colourOrder[game.colour_index] || '—';
+  return '—';
+}
+
+function allowed(kind) {
+  if (game.finished) return false;
+  if (game.phase === 'RED') return kind === 'RED';
+  if (game.phase === 'COLOUR') return colourOrder.includes(kind);
+  if (game.phase === 'CLEARING') return kind === colourOrder[game.colour_index];
+  return false;
+}
+
+function render() {
+  const scores = game.players.map(p => Number(p.score) || 0);
+  const high = Math.max(...scores);
+
+  $$('.score').forEach((el, i) => {
+    $('strong', el).textContent = scores[i];
+    el.classList.toggle('lead', scores[i] === high && high > 0);
+  });
+  $$('.mini').forEach((el, i) => el.textContent = scores[i]);
+
+  const current = game.players[game.current_player];
+  $('#turn').textContent = current ? current.name : '—';
+  $('#phase').textContent = ballOn();
+  $('#brk').textContent = game.break || 0;
+  $('#reds').textContent = (game.reds_potted || 0) + '/' + (game.red_count || 15);
+
+  $$('.player-card').forEach((card, i) => {
+    const active = i === game.current_player && !game.finished;
+    card.classList.toggle('active', active);
+    $('.status', card).textContent = game.finished ? 'FRAME FINISHED' : (active ? '● YOUR TURN' : 'Waiting');
+  });
+
+  const active = !game.finished;
+  $$('#balls .ball').forEach(btn => {
+    btn.disabled = !active || !allowed(btn.dataset.kind);
+  });
+  $$('[data-foul]').forEach(btn => btn.disabled = !active);
+  $('#miss').disabled = !active;
+  $('#undo').disabled = game.history.length === 0;
+}
+
+async function post(path, data={}) {
+  try {
+    const body = new URLSearchParams();
+    Object.entries(data).forEach(([k,v]) => body.set(k, v));
+    const response = await fetch(path, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'},
+      body,
+      credentials: 'same-origin',
+      cache: 'no-store'
+    });
+    const text = await response.text();
+    let result;
+    try { result = JSON.parse(text); }
+    catch { result = {ok:false, error:'Server returned an invalid response.'}; }
+    if (!response.ok && !result.error) result.error = 'Request failed (' + response.status + ').';
+    return result;
+  } catch (err) {
+    return {ok:false, error:'Cannot reach TriCue. Is the server still running?'};
+  }
+}
+
+async function pot(player, kind) {
+  if (player !== game.current_player || !allowed(kind)) return;
+  const result = await post('/shot', {kind});
+  if (result.ok) { game = result.game; render(); toast(kind + ' potted'); }
+  else toast(result.error || 'Could not record shot');
+}
+
+async function miss() {
+  if (game.finished) return;
+  const old = game.players[game.current_player]?.name || 'Player';
+  const result = await post('/turn-end');
+  if (result.ok) { game = result.game; render(); toast(old + ' missed • ' + game.players[game.current_player].name + ' is up'); }
+  else toast(result.error || 'Could not end visit');
+}
+
+async function foul(value) {
+  if (game.finished) return;
+  const name = game.players[game.current_player]?.name || 'Player';
+  const result = await post('/foul', {ball:value});
+  if (result.ok) { game = result.game; render(); toast('Foul: -' + value + ' from ' + name); }
+  else toast(result.error || 'Could not record foul');
+}
+
+async function undo() {
+  const result = await post('/undo');
+  if (result.ok) { game = result.game; render(); toast('Last action undone'); }
+  else toast(result.error || 'Nothing to undo');
+}
+
+async function newMatch() {
+  if (!confirm('Start a new match?')) return;
+  await post('/reset');
+  window.location.href = '/';
+}
+
+function toast(message) {
+  const el = $('#toast');
+  el.textContent = message;
+  el.classList.add('show');
+  clearTimeout(window.__toastTimer);
+  window.__toastTimer = setTimeout(() => el.classList.remove('show'), 1400);
+}
+
+$$('#balls .ball').forEach(btn => btn.addEventListener('click', () => pot(game.current_player, btn.dataset.kind)));
+$$('[data-foul]').forEach(btn => btn.addEventListener('click', () => foul(btn.dataset.foul)));
+$('#miss').addEventListener('click', miss);
+$('#undo').addEventListener('click', undo);
+$('#newMatch').addEventListener('click', newMatch);
+render();
+</script>
+</body>
+</html>

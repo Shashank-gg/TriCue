@@ -1,0 +1,26 @@
+<!doctype html>
+<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#06150e">
+<title>TriCue</title><link rel="stylesheet" href="{{url_for('static',filename='style.css')}}"></head>
+<body class="setup"><main class="setup-card">
+<div class="eight">8</div><h1>TRICUE</h1><p>Real Snooker Scoreboard</p>
+<form method="post"><label>NUMBER OF PLAYERS</label>
+<div class="counts">{% for n in range(2,7) %}<button type="button" class="count {% if n==3 %}selected{% endif %}" data-n="{{n}}">{{n}}</button>{% endfor %}</div>
+<input type="hidden" name="player_count" id="pc" value="3">
+
+<label for="redCount">NUMBER OF RED BALLS</label>
+<select name="red_count" id="redCount" class="red-select">
+  {% for n in range(1,16) %}
+  <option value="{{ n }}" {% if n == 15 %}selected{% endif %}>{{ n }} Red{% if n != 1 %}s{% endif %}</option>
+  {% endfor %}
+</select>
+<small class="hint">Choose how many reds are in this frame.</small>
+
+<div id="names"></div>
+<button type="submit" class="start">START MATCH →</button></form><small>● Runs locally on Android</small>
+</main>
+<script>
+const box=document.getElementById("names"),pc=document.getElementById("pc");
+function fields(n){box.innerHTML="";for(let i=0;i<n;i++)box.innerHTML+=`<input name="player_${i}" maxlength="24" placeholder="Player ${i+1}" autocomplete="off">`}
+document.querySelectorAll(".count").forEach(b=>b.onclick=()=>{document.querySelectorAll(".count").forEach(x=>x.classList.remove("selected"));b.classList.add("selected");pc.value=b.dataset.n;fields(+b.dataset.n)});
+fields(3);
+</script></body></html>
